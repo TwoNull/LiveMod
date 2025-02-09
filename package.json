@@ -1,0 +1,27 @@
+{
+    "name": "LiveMod",
+    "version": "1.0.0",
+    "sptVersion": "~3.10",
+    "loadBefore": [],
+    "loadAfter": [],
+    "incompatibilities": [],
+    "isBundleMod": false,
+    "main": "src/mod.js",
+    "scripts": {
+        "setup": "npm i",
+        "build": "node ./build.mjs",
+        "buildinfo": "node ./build.mjs --verbose"
+    },
+    "devDependencies": {
+        "@types/node": "20.11",
+        "archiver": "^6.0",
+        "fs-extra": "11.2",
+        "ignore": "^5.2",
+        "tsyringe": "4.8.0",
+        "typescript": "5.4",
+        "winston": "3.12"
+    },
+    "author": "TwoNull",
+    "contributors": [],
+    "license": "MIT"
+}
