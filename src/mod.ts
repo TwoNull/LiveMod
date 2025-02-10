@@ -15,10 +15,22 @@ class LiveMod implements IPreSptLoadMod
         staticRouterModService.registerStaticRouter(`GetStatusLM`,
             [{
                 url: "/livemod/status",
-                action: async () => 
+                action: async (url: string, info: any, sessionId: string, output: string) => 
                 {
                     logger.logWithColor("LiveMod Status OK", LogTextColor.GREEN);
-                    return JSON.stringify({ status: "OK" });
+                    return JSON.stringify({ resp: "OK" });
+                }
+            }], "status"
+        );
+
+        staticRouterModService.registerStaticRouter(`AddItemLM`,
+            [{
+                url: "/livemod/additem",
+                action: async (url: string, info: any, sessionId: string, output: string) => 
+                {
+                    
+                    logger.logWithColor("LiveMod Status OK", LogTextColor.GREEN);
+                    return JSON.stringify({ resp: "OK" });
                 }
             }], "status"
         );
