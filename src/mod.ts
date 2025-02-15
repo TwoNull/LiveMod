@@ -143,8 +143,8 @@ class LiveMod implements IPreSptLoadMod
             aid: this.hashUtil.generateAccountId(),
             Info: {
                 Nickname: "LiveMod",
-                Side: "Client",
-                Level: 69,
+                Side: "Usec",
+                Level: 1,
                 MemberCategory: 16,
                 SelectedMemberCategory: 16,
             },
