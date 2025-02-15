@@ -4,97 +4,151 @@ import { IPreSptLoadMod } from "@spt/models/external/IPreSptLoadMod";
 import type { StaticRouterModService } from "@spt/services/mod/staticRouter/StaticRouterModService";
 import { ILogger } from "@spt/models/spt/utils/ILogger";
 import { LogTextColor } from "@spt/models/spt/logging/LogTextColor";
-import { HttpResponseUtil } from "@spt/utils/HttpResponseUtil";
+import { SaveServer } from "@spt/servers/SaveServer";
+import { Watermark } from '@spt/utils/Watermark';
+import { DatabaseServer } from "@spt/servers/DatabaseServer";
+import { MailSendService } from "@spt/services/MailSendService";
 import { ItemHelper } from "@spt/helpers/ItemHelper";
 import { HashUtil } from "@spt/utils/HashUtil";
-import { InventoryHelper } from "@spt/helpers/InventoryHelper";
-import { ProfileHelper } from "@spt/helpers/ProfileHelper";
-import { SaveServer } from "@spt/servers/SaveServer";
-import { EventOutputHolder } from "@spt/routers/EventOutputHolder";
+import { IUserDialogInfo } from "@spt/models/eft/profile/ISptProfile";
+import { IItem } from "@spt/models/eft/common/tables/IItem";
+import { BaseClasses } from "@spt/models/enums/BaseClasses";
+import { PresetHelper } from "@spt/helpers/PresetHelper";
+
+const LM_VERSION = "0.1.0"
 
 class LiveMod implements IPreSptLoadMod
 {
-    private httpResponseUtil: HttpResponseUtil;
-    private itemHelper: ItemHelper;
-    private inventoryHelper: InventoryHelper;
-    private hashUtil: HashUtil;
-    private profileHelper: ProfileHelper;
     private saveServer: SaveServer;
-    private eventOutputHolder: EventOutputHolder;
+    private watermark: Watermark;
+    private databaseServer: DatabaseServer;
+    private mailSendService: MailSendService;
+    private itemHelper: ItemHelper;
+    private hashUtil: HashUtil;
+    private presetHelper: PresetHelper;
+
+    private lmChatBot: IUserDialogInfo;
 
     public preSptLoad(container: DependencyContainer): void
     {
         const logger = container.resolve<ILogger>("WinstonLogger");
         const staticRouterModService = container.resolve<StaticRouterModService>("StaticRouterModService");
 
-        staticRouterModService.registerStaticRouter(`GetStatusLM`,
-            [{
-                url: "/livemod/status",
-                action: async () => 
+        staticRouterModService.registerStaticRouter(
+            'LMRouter',
+            [
                 {
-                    logger.logWithColor("LiveMod Status OK", LogTextColor.GREEN);
-                    return this.httpResponseUtil.getBody("ok", 200);
-                }
-            }], "status"
-        );
-
-        staticRouterModService.registerStaticRouter(`AddItemLM`,
-            [{
-                url: "/livemod/additem",
-                action: async () => 
+                    url: '/livemod/status',
+                    action: async (url: string, info: any, sessionId: string, output: string) => {
+                        logger.log(`LiveMod Status OK`, LogTextColor.GREEN);
+                        const version = this.watermark.getVersionTag();
+                        return JSON.stringify({version, LM_VERSION});
+                    },
+                },
                 {
-                    const tpl = "5a43957686f7742a2c2f11b0";
-                    logger.logWithColor("AddItem Request for TPL " + tpl, LogTextColor.GREEN);
-                    const [ok, iTemplate] = this.itemHelper.getItem(tpl)
-                    if (!ok) {
-                        return this.httpResponseUtil.getBody(undefined, 400, "invalid tpl");
-                    }
-                    const iUpd = this.itemHelper.generateUpdForItem(iTemplate)
-                    const addItemReq = {
-                        itemWithModsToAdd: [
-                            {
-                                _id: this.hashUtil.generate(),
-                                _tpl: tpl,
-                                parentId: iTemplate._parent,
-                                upd: iUpd,
+                    url: '/livemod/profiles',
+                    action: (url: string, info: any, sessionId: string, output: string) => {
+                        return Promise.resolve(JSON.stringify(this.saveServer.getProfiles()));
+                    },
+                },
+                {
+                    url: '/livemod/items',
+                    action: async (url: string, info: any, sessionId: string, output: string) => {
+                        return JSON.stringify({
+                            items: this.databaseServer.getTables().templates.items,
+                            globalPresets: this.databaseServer.getTables().globals.ItemPresets
+                        });
+                    },
+                },
+                {
+                    url: '/livemod/add',
+                    action: async (url: string, info: any, sessionId: string, output: string) => {
+                        const checkedItem = this.itemHelper.getItem(info.tplId);
+                        if (!checkedItem[0]) {
+                            this.mailSendService.sendUserMessageToPlayer(
+                                sessionId,
+                                this.lmChatBot,
+                                "That item could not be found. Please refine your request and try again.",
+                            );
+                            return JSON.stringify({"success": "false"});;
+                        }
+                
+                        const itemsToSend: IItem[] = [];
+                        const preset = this.presetHelper.getDefaultPreset(checkedItem[1]._id);
+                        if (preset) {
+                            for (let i = 0; i < info.quantity; i++) {
+                                let items = Array.from(preset._items);
+                                items = this.itemHelper.replaceIDs(items);
+                                itemsToSend.push(...items);
                             }
-                        ],
-                        callback: (buyCount: number) => {},
-                        foundInRaid: true,
-                        useSortingTable: false,
-                    };
-
-                    let sessId = "";
-
-                    const profiles = this.saveServer.getProfiles();
-                    logger.logWithColor("List of Profiles:", LogTextColor.YELLOW);
-                    for ( const p in profiles) {
-                        logger.logWithColor(p + ":" + profiles[p].info.username, LogTextColor.YELLOW);
-                        sessId = p;
-                    }
-
-                    logger.logWithColor("Got current session id " + sessId, LogTextColor.GREEN);
-                    const iPmcData = this.profileHelper.getPmcProfile(sessId);
-                    
-                    const output = this.eventOutputHolder.getOutput(sessId);
-
-                    this.inventoryHelper.addItemToStash(sessId, addItemReq, iPmcData, output);
-
-                    return JSON.stringify(output)
-                }
-            }], "status"
+                        } else if (this.itemHelper.isOfBaseclass(checkedItem[1]._id, BaseClasses.AMMO_BOX)) {
+                            for (let i = 0; i < info.quantity; i++) {
+                                const ammoBoxArray: IItem[] = [];
+                                ammoBoxArray.push({ _id: this.hashUtil.generate(), _tpl: checkedItem[1]._id });
+                                itemsToSend.push(...ammoBoxArray);
+                            }
+                        } else {
+                            if (checkedItem[1]._props.StackMaxSize === 1) {
+                                for (let i = 0; i < info.quantity; i++) {
+                                    itemsToSend.push({
+                                        _id: this.hashUtil.generate(),
+                                        _tpl: checkedItem[1]._id,
+                                        upd: this.itemHelper.generateUpdForItem(checkedItem[1]),
+                                    });
+                                }
+                            } else {
+                                const item: IItem = {
+                                    _id: this.hashUtil.generate(),
+                                    _tpl: checkedItem[1]._id,
+                                    upd: this.itemHelper.generateUpdForItem(checkedItem[1]),
+                                };
+                                item.upd.StackObjectsCount = info.quantity;
+                                try {
+                                    itemsToSend.push(...this.itemHelper.splitStack(item));
+                                } catch {
+                                    this.mailSendService.sendUserMessageToPlayer(
+                                        sessionId,
+                                        this.lmChatBot,
+                                        "Too many items requested. Please lower the amount and try again.",
+                                    );
+                                    return JSON.stringify({"success": "false"});
+                                }
+                            }
+                        }
+                
+                        this.itemHelper.setFoundInRaid(itemsToSend);
+                
+                        this.mailSendService.sendSystemMessageToPlayer(sessionId, "LiveMod Added", itemsToSend);
+                        return JSON.stringify({"success": "true"});
+                    },
+                },
+            ],
+            'give-ui-top-level-route',
         );
     }
 
     public postDBLoad(container: DependencyContainer): void
     {
-        this.httpResponseUtil = container.resolve<HttpResponseUtil>("HttpResponseUtil");
-        this.itemHelper = container.resolve<ItemHelper>("ItemHelper");
-        this.inventoryHelper = container.resolve<InventoryHelper>("InventoryHelper");
-        this.profileHelper = container.resolve<ProfileHelper>("ProfileHelper");
-        this.hashUtil = container.resolve<HashUtil>("HashUtil");
         this.saveServer = container.resolve<SaveServer>("SaveServer");
-        this.eventOutputHolder = container.resolve<EventOutputHolder>("EventOutputHolder");
+        this.watermark = container.resolve<Watermark>("Watermark");
+        this.databaseServer = container.resolve<DatabaseServer>("DatabaseServer");
+        this.mailSendService = container.resolve<MailSendService>("MailSendService");
+        this.itemHelper = container.resolve<ItemHelper>("ItemHelper");
+        this.hashUtil = container.resolve<HashUtil>("HashUtil");
+        this.presetHelper = container.resolve<PresetHelper>("PresetHelper");
+
+        this.lmChatBot = {
+            _id: this.hashUtil.generate(),
+            aid: this.hashUtil.generateAccountId(),
+            Info: {
+                Nickname: "LiveMod",
+                Side: "Client",
+                Level: 69,
+                MemberCategory: 16,
+                SelectedMemberCategory: 16,
+            },
+        };
+
     }
 }
 
