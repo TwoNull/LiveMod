@@ -63,6 +63,7 @@ class LiveMod implements IPreSptLoadMod
                 {
                     url: '/livemod/add',
                     action: async (url: string, info: any, sessionId: string, output: string) => {
+                        logger.log(JSON.stringify(info), LogTextColor.GREEN);
                         const checkedItem = this.itemHelper.getItem(info.tplId);
                         if (!checkedItem[0]) {
                             this.mailSendService.sendUserMessageToPlayer(
